@@ -29,13 +29,61 @@ app.post("/support", async (req, res) => {
         { role: "user", content: question },
     ];
 
-    const response = await openai.responses.create({
-        model: MODEL,
-        tools,
-        input,
-        // tool_choice can guide behavior; we keep auto for now
-    });
-    return res.json(response);
+    for (let step = 0; step < 5; step++) {
+        const response = await openai.responses.create({
+            model: MODEL,
+            tools,
+            input,
+            // tool_choice can guide behavior; we keep auto for now
+        });
+
+        // If we got a final text answer, return it
+        if (response.output_text.trim().length > 0) {
+            return res.json({ answer: response.output_text });
+        }
+
+        // Otherwise handle tool calls
+        const toolCalls =
+            response.output?.filter((x: any) => x.type === "function_call") ??
+            [];
+
+        if (toolCalls.length === 0) {
+            // Nothing to do; avoid silent failure
+            return res
+                .status(500)
+                .json({ error: "No output_text and no tool calls." });
+        }
+
+        // Append the model output items to input (so the model remembers what it asked)
+        input.push(...response.output);
+
+        for (const call of toolCalls) {
+            let output: any = null;
+            try {
+                const args = JSON.parse((call as any).arguments ?? "{}");
+                if ((call as any).name === "get_order") {
+                    output = getOrder(String(args.orderId));
+                } else if ((call as any).name === "list_orders_by_email") {
+                    output = listOrdersByEmail(String(args.email));
+                } else {
+                    output = { error: `Unknown tool: ${(call as any).name}` };
+                }
+            } catch (e: any) {
+                output = {
+                    error: "Bad tool arguments",
+                    details: e?.message ?? String(e),
+                };
+            }
+
+            input.push({
+                type: "function_call_output",
+                call_id: (call as any).call_id,
+                output: JSON.stringify(output),
+            });
+        }
+    }
+
+    return res.status(500).json({ error: "Tool loop limit reached." });
 });
 
 app.listen(3000, () =>
