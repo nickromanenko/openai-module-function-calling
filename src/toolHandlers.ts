@@ -1,4 +1,4 @@
-import { ORDERS } from "./data/orders.js";
+import { ORDERS } from "./data/orders";
 
 export function getOrder(orderId: string) {
     return ORDERS.find((o) => o.id === orderId) ?? null;

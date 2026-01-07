@@ -1,8 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import OpenAI from "openai";
-import { tools } from "./tools.js";
-import { getOrder, listOrdersByEmail } from "./toolHandlers.js";
+import { tools } from "./tools";
+import { getOrder, listOrdersByEmail } from "./toolHandlers";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -57,18 +57,18 @@ app.post("/support", async (req, res) => {
         // Append the model output items to input (so the model remembers what it asked)
         input.push(...response.output);
 
-        for (const call as any of toolCalls) {
+        for (const call of toolCalls) {
             let output: any = null;
 
             try {
-                const args = JSON.parse(call.arguments ?? "{}");
+                const args = JSON.parse((call as any).arguments ?? "{}");
 
-                if (call.name === "get_order") {
+                if ((call as any).name === "get_order") {
                     output = getOrder(String(args.orderId));
-                } else if (call.name === "list_orders_by_email") {
+                } else if ((call as any).name === "list_orders_by_email") {
                     output = listOrdersByEmail(String(args.email));
                 } else {
-                    output = { error: `Unknown tool: ${call.name}` };
+                    output = { error: `Unknown tool: ${(call as any).name}` };
                 }
             } catch (e: any) {
                 output = {
@@ -79,7 +79,7 @@ app.post("/support", async (req, res) => {
 
             input.push({
                 type: "function_call_output",
-                call_id: call.call_id,
+                call_id: (call as any).call_id,
                 output: JSON.stringify(output),
             });
         }

@@ -1,8 +1,9 @@
 export const tools = [
     {
-        type: "function",
+        type: "function" as const,
         name: "get_order",
         description: "Get an order by its id.",
+        strict: null,
         parameters: {
             type: "object",
             properties: {
@@ -12,9 +13,10 @@ export const tools = [
         },
     },
     {
-        type: "function",
+        type: "function" as const,
         name: "list_orders_by_email",
         description: "List recent orders for a customer email.",
+        strict: null,
         parameters: {
             type: "object",
             properties: {
