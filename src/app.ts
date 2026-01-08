@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import OpenAI from "openai";
 import { tools } from "./tools";
+import { zodTextFormat } from "openai/helpers/zod";
+import { SupportResponseSchema } from "./schemas/supportResponse";
 import { getOrder, listOrdersByEmail } from "./toolHandlers";
 
 const app = express();
