@@ -3,8 +3,8 @@ import { z } from "zod";
 export const OrderSchema = z.object({
     id: z.string(),
     status: z.enum(["processing", "shipped", "delivered", "canceled"]),
-    etaDays: z.number().int().nonnegative().optional(),
-    trackingNumber: z.string().optional(),
+    etaDays: z.number().int().nonnegative().optional().nullable(),
+    trackingNumber: z.string().optional().nullable(),
 });
 
 export const SupportResponseSchema = z.object({
