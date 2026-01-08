@@ -36,28 +36,23 @@ app.post("/support", async (req, res) => {
             model: MODEL,
             tools,
             input,
+            parallel_tool_calls: false,
+
             // tool_choice can guide behavior; we keep auto for now
         });
 
-        // If we got a final text answer, return it
-        if (response.output_text.trim().length > 0) {
-            return res.json({ answer: response.output_text });
-        }
-
         // Otherwise handle tool calls
         const toolCalls =
-            response.output?.filter((x: any) => x.type === "function_call") ??
-            [];
+            (response.output ?? [])?.filter(
+                (x: any) => x.type === "function_call"
+            ) ?? [];
 
         if (toolCalls.length === 0) {
-            // Nothing to do; avoid silent failure
-            return res
-                .status(500)
-                .json({ error: "No output_text and no tool calls." });
+            break;
         }
 
         // Append the model output items to input (so the model remembers what it asked)
-        input.push(...response.output);
+        input.push(...(response.output ?? []));
 
         for (const call of toolCalls) {
             let output: any = null;
@@ -85,7 +80,24 @@ app.post("/support", async (req, res) => {
         }
     }
 
-    return res.status(500).json({ error: "Tool loop limit reached." });
+    const parsed = await openai.responses.parse({
+        model: MODEL,
+        input: [
+            ...input,
+            {
+                role: "developer",
+                content:
+                    "Now produce the final answer as STRICT JSON matching the schema. " +
+                    "If you asked a clarifying question, set needsMoreInfo=true and put it in clarifyingQuestion.",
+            },
+        ],
+        text: {
+            format: zodTextFormat(SupportResponseSchema, "support_response"),
+        },
+        max_output_tokens: 1200,
+    });
+
+    return res.json(parsed.output_parsed);
 });
 
 app.listen(3000, () =>
