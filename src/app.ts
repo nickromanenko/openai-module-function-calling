@@ -12,7 +12,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static("public"));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MODEL = process.env.MODEL ?? "gpt-5";
+const MODEL = process.env.MODEL ?? "gpt-5-nano";
 
 app.post("/support", async (req, res) => {
     const question = req.body?.question;
@@ -104,6 +104,78 @@ app.post("/support", async (req, res) => {
 
 app.get("/support-stream", async (req, res) => {
     const question = String(req.query.question ?? "").trim();
+    if (question.length < 3) {
+        return res
+            .status(400)
+            .json({ error: "question query param is required" });
+    }
+
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    res.write(`event: ready\ndata: ok\n\n`);
+
+    let closed = false;
+    req.on("close", () => {
+        closed = true;
+    });
+
+    try {
+        const stream = await openai.responses.create({
+            model: MODEL,
+            input: [
+                {
+                    role: "developer",
+                    content:
+                        "You are an order support assistant. Be concise. " +
+                        "If you need more info, ask one clarifying question.",
+                },
+                { role: "user", content: question },
+            ],
+            max_output_tokens: 3000,
+            stream: true,
+        });
+
+        for await (const event of stream as any) {
+            if (closed) {
+                break;
+            }
+
+            // Stream text deltas to the client
+            if (event.type === "response.output_text.delta") {
+                res.write(
+                    `event: delta\ndata: ${JSON.stringify(event.delta)}\n\n`
+                );
+            }
+
+            if (event.type === "response.created") {
+                res.write(
+                    `event: meta\ndata: ${JSON.stringify({
+                        responseId: event.response.id,
+                    })}\n\n`
+                );
+            }
+
+            if (event.type === "response.completed") {
+                res.write(`event: done\ndata: ok\n\n`);
+                break;
+            }
+
+            if (event.type === "error" || event.type === "response.failed") {
+                res.write(`event: error\ndata: ${JSON.stringify(event)}\n\n`);
+                break;
+            }
+        }
+    } catch (err: any) {
+        res.write(
+            `event: error\ndata: ${JSON.stringify({
+                message: err?.message ?? String(err),
+            })}\n\n`
+        );
+    } finally {
+        res.end();
+    }
 });
 
 app.listen(3000, () =>
