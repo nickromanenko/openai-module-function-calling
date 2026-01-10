@@ -8,6 +8,8 @@ import { getOrder, listOrdersByEmail } from "./toolHandlers";
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
+// Serve static files (for the streaming demo HTML page)
+app.use(express.static("public"));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.MODEL ?? "gpt-5";
@@ -98,6 +100,10 @@ app.post("/support", async (req, res) => {
     });
 
     return res.json(parsed.output_parsed);
+});
+
+app.get("/support-stream", async (req, res) => {
+    const question = String(req.query.question ?? "").trim();
 });
 
 app.listen(3000, () =>

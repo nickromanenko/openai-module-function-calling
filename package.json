@@ -6,7 +6,8 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/app.js",
-        "dev": "ts-node src/app.ts"
+        "dev": "ts-node src/app.ts",
+        "dev:stream-demo": "ts-node src/app.ts"
     },
     "dependencies": {
         "dotenv": "^17.2.3",
