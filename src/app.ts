@@ -178,6 +178,52 @@ app.get("/support-stream", async (req, res) => {
     }
 });
 
+app.get("/support-stream-final", async (req, res) => {
+    const question = String(req.query.question ?? "").trim();
+    if (question.length < 3)
+        return res.status(400).json({ error: "question required" });
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    const input: any[] = [
+        {
+            role: "developer",
+            content:
+                "You are order support. Use tools. Never invent order status.",
+        },
+        { role: "user", content: question },
+    ];
+
+    // --- Phase 1: tool calls (non-streaming) ---
+
+    // --- Phase 2: final answer (streaming) ---
+    const stream = await openai.responses.create({
+        model: MODEL,
+        input,
+        stream: true,
+        // optional: tools: []  // keep it simple: no more tools during final answer
+    });
+
+    for await (const event of stream) {
+        if (event.type === "response.output_text.delta") {
+            res.write(`event: delta\ndata: ${JSON.stringify(event.delta)}\n\n`);
+        }
+        if (event.type === "response.completed") {
+            res.write(`event: done\ndata: "ok"\n\n`);
+            break;
+        }
+        if (event.type === "response.failed" || event.type === "error") {
+            res.write(`event: error\ndata: ${JSON.stringify(event)}\n\n`);
+            break;
+        }
+    }
+
+    res.end();
+});
+
 app.listen(3000, () =>
     console.log("[+] API listening on http://localhost:3000")
 );
