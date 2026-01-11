@@ -3,6 +3,7 @@ import express from "express";
 import OpenAI from "openai";
 import { tools } from "./tools";
 import { zodTextFormat } from "openai/helpers/zod";
+import { z } from "zod";
 import { SupportResponseSchema } from "./schemas/supportResponse";
 import { getOrder, listOrdersByEmail } from "./toolHandlers";
 
@@ -260,6 +261,147 @@ app.get("/support-stream-final", async (req, res) => {
     }
 
     res.end();
+});
+
+const FinalSchema = z.object({
+    answer: z.string(),
+    order: z
+        .object({
+            id: z.string(),
+            status: z.enum(["processing", "shipped", "delivered", "canceled"]),
+            etaDays: z.number().int().nonnegative().optional(),
+            trackingNumber: z.string().optional(),
+        })
+        .nullable(),
+    nextSteps: z.array(z.string()).max(5),
+    needsMoreInfo: z.boolean(),
+    clarifyingQuestion: z.string().nullable(),
+});
+
+app.get("/support-stream-structured", async (req, res) => {
+    const question = String(req.query.question ?? "").trim();
+    if (question.length < 3)
+        return res.status(400).json({ error: "question required" });
+
+    // SSE headers
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+
+    res.write(`event: ready\ndata: "ok"\n\n`);
+
+    let closed = false;
+    req.on("close", () => (closed = true));
+
+    const input: any[] = [
+        {
+            role: "developer",
+            content:
+                "You are order support.\n" +
+                "- Use tools to retrieve order data.\n" +
+                "- Never invent order status.\n" +
+                "- If info is missing, ask one clarifying question.\n",
+        },
+        { role: "user", content: question },
+    ];
+
+    try {
+        // ---- Phase 1: tools (non-streaming) ----
+        const first = await openai.responses.create({
+            model: MODEL,
+            tools,
+            input,
+            parallel_tool_calls: false,
+        });
+
+        res.write(
+            `event: meta\ndata: ${JSON.stringify({ responseId: first.id })}\n\n`
+        );
+
+        input.push(...(first.output ?? []));
+
+        for (const item of first.output ?? []) {
+            if (closed) return res.end();
+            if (item.type !== "function_call") continue;
+
+            res.write(
+                `event: status\ndata: ${JSON.stringify(
+                    `Calling ${item.name}...`
+                )}\n\n`
+            );
+
+            const args = JSON.parse(item.arguments ?? "{}");
+            const toolResult =
+                item.name === "get_order"
+                    ? getOrder(String(args.orderId))
+                    : item.name === "list_orders_by_email"
+                    ? listOrdersByEmail(String(args.email))
+                    : { error: `Unknown tool: ${item.name}` };
+
+            input.push({
+                type: "function_call_output",
+                call_id: item.call_id,
+                output: JSON.stringify(toolResult),
+            });
+
+            res.write(
+                `event: status\ndata: ${JSON.stringify(
+                    `Tool ${item.name} done`
+                )}\n\n`
+            );
+        }
+
+        // ---- Phase 2: stream the human-facing answer ----
+        let answerBuffer = "";
+
+        const stream = await openai.responses.create({
+            model: MODEL,
+            input: [
+                ...input,
+                {
+                    role: "developer",
+                    content:
+                        "Now answer the user. Be concise and helpful. " +
+                        "If you need more info, ask one clarifying question.",
+                },
+            ],
+            stream: true,
+            max_output_tokens: 400,
+        });
+
+        for await (const event of stream) {
+            if (closed) return res.end();
+
+            if (event.type === "response.output_text.delta") {
+                answerBuffer += event.delta;
+                res.write(
+                    `event: delta\ndata: ${JSON.stringify(event.delta)}\n\n`
+                );
+            }
+
+            if (event.type === "response.completed") {
+                break;
+            }
+
+            if (event.type === "response.failed" || event.type === "error") {
+                res.write(`event: error\ndata: ${JSON.stringify(event)}\n\n`);
+                return res.end();
+            }
+        }
+
+        // ---- Phase 3: produce strict JSON (Structured Outputs) ----
+        // We feed back the streamed answer as context so JSON matches what user saw.
+
+        res.write(`event: done\ndata: "ok"\n\n`);
+        res.end();
+    } catch (err: any) {
+        res.write(
+            `event: error\ndata: ${JSON.stringify({
+                message: err?.message ?? String(err),
+            })}\n\n`
+        );
+        res.end();
+    }
 });
 
 app.listen(3000, () =>
