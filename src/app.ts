@@ -198,6 +198,44 @@ app.get("/support-stream-final", async (req, res) => {
     ];
 
     // --- Phase 1: tool calls (non-streaming) ---
+    const first = await openai.responses.create({
+        model: MODEL,
+        tools, // from Lesson 4
+        input,
+        parallel_tool_calls: false,
+    });
+
+    input.push(...(first.output ?? []));
+
+    for (const item of first.output ?? []) {
+        if (item.type !== "function_call") continue;
+
+        res.write(
+            `event: status\ndata: ${JSON.stringify(
+                `Calling ${item.name}...`
+            )}\n\n`
+        );
+
+        const args = JSON.parse(item.arguments ?? "{}");
+        const toolResult =
+            item.name === "get_order"
+                ? getOrder(String(args.orderId))
+                : item.name === "list_orders_by_email"
+                ? listOrdersByEmail(String(args.email))
+                : { error: `Unknown tool: ${item.name}` };
+
+        input.push({
+            type: "function_call_output",
+            call_id: item.call_id,
+            output: JSON.stringify(toolResult),
+        });
+
+        res.write(
+            `event: status\ndata: ${JSON.stringify(
+                `Tool ${item.name} done`
+            )}\n\n`
+        );
+    }
 
     // --- Phase 2: final answer (streaming) ---
     const stream = await openai.responses.create({
